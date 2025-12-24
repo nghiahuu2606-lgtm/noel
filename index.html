@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Magic Christmas - Seamless Snow</title>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+    <style>
+        body { margin: 0; overflow: hidden; background: radial-gradient(circle at center, #0a101e 0%, #000000 100%); font-family: 'Segoe UI', sans-serif; }
+        #canvas-container { width: 100%; height: 100vh; }
+        #ui-layer { position: absolute; bottom: 30px; width: 100%; text-align: center; pointer-events: none; z-index: 100; }
+        .badge { display: inline-block; background: rgba(0,0,0,0.8); border: 2px solid #FFD700; color: #FFD700; padding: 10px 25px; border-radius: 50px; font-size: 18px; font-weight: bold; margin-bottom: 10px; text-transform: uppercase; box-shadow: 0 0 20px rgba(255, 215, 0, 0.4); }
+        .guide { color: rgba(255,255,255,0.8); font-size: 14px; margin-bottom: 20px; text-shadow: 0 2px 4px black; background: rgba(0,0,0,0.3); display: inline-block; padding: 5px 15px; border-radius: 20px;}
+        button { pointer-events: auto; cursor: pointer; background: linear-gradient(135deg, #ff4444 0%, #990000 100%); color: #FFF; border: 2px solid #FFD700; padding: 15px 50px; border-radius: 50px; font-weight: bold; font-size: 18px; box-shadow: 0 0 30px rgba(255, 0, 0, 0.5); transition: 0.3s; }
+        button:hover { transform: scale(1.1); }
+        #camera-preview { position: absolute; top: 15px; right: 15px; width: 130px; height: 100px; border: 2px solid gold; transform: scaleX(-1); border-radius: 10px; background: #000; }
+    </style>
+</head>
+<body>
+    <div id="ui-layer">
+        <div id="status" class="badge">🎄 GIÁNG SINH DIỆU KỲ 🎄</div>
+        <br>
+        <div class="guide">
+            ✊ <b>Nắm:</b> Hiện Cây | 🖐 <b>Xòe:</b> Bung Quà & Ảnh | 🫶 <b>2 Tay:</b> Trái Tim | 👌 <b>Pinch:</b> Phóng to
+        </div>
+        <br>
+        <button id="btnStart" onclick="startSystem()">BẮT ĐẦU MAGIC</button>
+    </div>
+
+    <div id="canvas-container"></div>
+    <video class="input_video" style="display:none"></video>
+    <canvas id="camera-preview"></canvas>
+
+    <script>
+        const photoFiles = ['img/image1.jpeg', 'img/image2.jpeg', 'img/image3.jpeg', 'img/image4.jpeg', 'img/image5.jpeg'];
+        const CONFIG = { 
+            goldCount: 2200, 
+            redCount: 400, 
+            giftCount: 150, 
+            snowCount: 800, // Tăng thêm một chút tnhignghiaqweuyết cho đẹp
+            trailCount: 120, 
+            treeHeight: 75 
+        };
+
+        let scene, camera, renderer, groupGold, groupRed, groupGift, groupTrail, snowGroup;
+        let photoMeshes = [], titleMesh, starMesh;
+        let state = 'TREE', handX = 0.5, selectedIndex = 0;
+        let bgMusic = new Audio("./audio.mp3"); bgMusic.loop = true;
+
+        function createCustomTexture(type) {
+            const canvas = document.createElement('canvas'); canvas.width = 64; canvas.height = 64;
+            const ctx = canvas.getContext('2d');
+            if (type === 'gift') {
+                ctx.fillStyle = '#FF0000'; ctx.fillRect(10, 10, 44, 44);
+                ctx.fillStyle = '#FFD700'; ctx.fillRect(28, 10, 8, 44); ctx.fillRect(10, 28, 44, 8);
+            } else {
+                const grd = ctx.createRadialGradient(32, 32, 0, 32, 32, 30);
+                grd.addColorStop(0, '#fff');
+                const color = (type === 'gold') ? 'gold' : '#FF0033'; 
+                grd.addColorStop(0.4, color);
+                grd.addColorStop(1, 'rgba(0,0,0,0)');
+                ctx.fillStyle = grd; ctx.fillRect(0,0,64,64);
+            }
+            return new THREE.CanvasTexture(canvas);
+        }
+
+        function init3D() {
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight, 0.1, 1000);
+            camera.position.z = 120;
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+            groupGold = createParticleSystem('gold', CONFIG.goldCount, 1.6);
+            groupRed = createParticleSystem('red', CONFIG.redCount, 3.0);
+            groupGift = createParticleSystem('gift', CONFIG.giftCount, 3.5);
+            groupTrail = createTrailSystem();
+
+            // Load Ảnh
+            const loader = new THREE.TextureLoader();
+            const photoGeo = new THREE.PlaneGeometry(14, 14);
+            photoFiles.forEach((url, i) => {
+                loader.load(url, (tex) => {
+                    const mesh = new THREE.Mesh(photoGeo, new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide, transparent: true, opacity: 0 }));
+                    const border = new THREE.Mesh(new THREE.PlaneGeometry(15, 15), new THREE.MeshBasicMaterial({ color: 0xffd700, transparent: true, opacity: 0 }));
+                    border.position.z = -0.1; mesh.add(border);
+                    scene.add(mesh); photoMeshes.push(mesh);
+                }, undefined, () => console.log("Thiếu ảnh: " + url));
+            });
+
+            // TUYẾT RƠI LIÊN TỤC (Sử dụng Float32Array để cập nhật từng hạt)
+            const snowGeo = new THREE.BufferGeometry();
+            const snowPos = new Float32Array(CONFIG.snowCount * 3);
+            for(let i=0; i<CONFIG.snowCount; i++) {
+                snowPos[i*3] = (Math.random()-0.5)*400;     // X
+                snowPos[i*3+1] = Math.random()*200-100;    // Y
+                snowPos[i*3+2] = (Math.random()-0.5)*400;   // Z
+            }
+            snowGeo.setAttribute('position', new THREE.BufferAttribute(snowPos, 3));
+            snowGroup = new THREE.Points(snowGeo, new THREE.PointsMaterial({size: 0.8, color: 0xffffff, transparent: true, opacity: 0.8}));
+            scene.add(snowGroup);
+
+            createDecor();
+            animate();
+        }
+
+        function createTrailSystem() {
+            const geo = new THREE.BufferGeometry();
+            const pos = new Float32Array(CONFIG.trailCount * 3);
+            const trailData = [];
+            for(let i=0; i<CONFIG.trailCount; i++) trailData.push({ offset: i / CONFIG.trailCount });
+            geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+            geo.userData = { trailData };
+            const mat = new THREE.PointsMaterial({ size: 3.5, map: createCustomTexture('red'), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false });
+            return new THREE.Points(geo, mat);
+        }
+
+        function updateTrail(time) {
+            if(!groupTrail) return;
+            const pos = groupTrail.geometry.attributes.position.array;
+            const { trailData } = groupTrail.geometry.userData;
+            for(let i=0; i<CONFIG.trailCount; i++) {
+                let t = (time * 0.02 + trailData[i].offset) % 1;
+                const h = (1 - t) * CONFIG.treeHeight - (CONFIG.treeHeight / 2);
+                const radius = t * 35 + 2;
+                const angle = t * Math.PI * 15 + groupGold.rotation.y;
+                pos[i*3] = Math.cos(angle) * radius;
+                pos[i*3+1] = h;
+                pos[i*3+2] = Math.sin(angle) * radius;
+            }
+            groupTrail.geometry.attributes.position.needsUpdate = true;
+            groupTrail.visible = (state === 'TREE');
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const time = Date.now() * 0.001;
+
+            updateTrail(time);
+
+            // LOGIC TUYẾT RƠI LIÊN TỤC: Cập nhật từng hạt đơn lẻ
+            const snowPositions = snowGroup.geometry.attributes.position.array;
+            for (let i = 0; i < CONFIG.snowCount; i++) {
+                // Hạt rơi xuống
+                snowPositions[i * 3 + 1] -= 0.25; 
+                
+                // Nếu hạt rơi quá đáy (-100), đưa nó trở lại đỉnh (100)
+                if (snowPositions[i * 3 + 1] < -100) {
+                    snowPositions[i * 3 + 1] = 100;
+                    // Reset ngẫu nhiên X và Z để tuyết không bị lặp lại hình khối cũ
+                    snowPositions[i * 3] = (Math.random() - 0.5) * 400;
+                    snowPositions[i * 3 + 2] = (Math.random() - 0.5) * 400;
+                }
+            }
+            snowGroup.geometry.attributes.position.needsUpdate = true;
+
+            [groupGold, groupRed, groupGift].forEach(g => {
+                const p = g.geometry.attributes.position.array;
+                const target = g.geometry.userData[state === 'HEART' ? 'heart' : (state === 'TREE' ? 'tree' : 'explode')];
+                for(let i=0; i<p.length; i++) p[i] += (target[i] - p[i]) * 0.03;
+                g.geometry.attributes.position.needsUpdate = true;
+                g.rotation.y += (state==='TREE') ? 0.005 : (handX - 0.5) * 0.01;
+            });
+
+            titleMesh.visible = starMesh.visible = (state === 'TREE');
+
+            photoMeshes.forEach((m, i) => {
+                if(state === 'EXPLODE' || state === 'PHOTO') {
+                    m.visible = true;
+                    if(state === 'EXPLODE') {
+                        const ang = groupGold.rotation.y + i * (Math.PI*2/5);
+                        m.position.lerp(new THREE.Vector3(Math.sin(ang)*45, Math.sin(time+i)*8, Math.cos(ang)*45), 0.2);
+                        m.scale.lerp(new THREE.Vector3(1,1,1), 0.1);
+                        m.material.opacity = Math.min(m.material.opacity + 0.009, 1);
+                        if(m.position.z > 25) selectedIndex = i;
+                    } else if (i === selectedIndex) {
+                        m.position.lerp(new THREE.Vector3(0, 0, 75), 0.1);
+                        m.scale.lerp(new THREE.Vector3(3.5, 3.5, 3.5), 0.1);
+                    }
+                    m.lookAt(camera.position);
+                    m.children[0].material.opacity = m.material.opacity;
+                } else {
+                    m.material.opacity = Math.max(m.material.opacity - 0.1, 0);
+                    if(m.material.opacity <= 0) m.visible = false;
+                }
+            });
+            renderer.render(scene, camera);
+        }
+
+        // ... (Các hàm còn lại createDecor, createParticleSystem, startSystem giữ nguyên như cũ)
+        function createDecor() {
+            const canvas = document.createElement('canvas'); canvas.width = 1024; canvas.height = 256;
+            const ctx = canvas.getContext('2d');
+            ctx.font = 'bold 90px "Segoe UI"'; ctx.textAlign='center'; ctx.fillStyle='#ffd700';
+            ctx.shadowColor = '#ff0000'; ctx.shadowBlur = 20; ctx.fillText("MERRY CHRISTMAS", 512, 140);
+            titleMesh = new THREE.Mesh(new THREE.PlaneGeometry(80, 20), new THREE.MeshBasicMaterial({map: new THREE.CanvasTexture(canvas), transparent:true}));
+            titleMesh.position.y = 55; scene.add(titleMesh);
+            starMesh = new THREE.Mesh(new THREE.PlaneGeometry(15, 15), new THREE.MeshBasicMaterial({map: createCustomTexture('gold'), transparent:true, blending:THREE.AdditiveBlending}));
+            starMesh.position.y = 42; scene.add(starMesh);
+        }
+
+        function createParticleSystem(type, count, size) {
+            const tree = [], explode = [], heart = [], pos = [];
+            for(let i=0; i<count; i++) {
+                const h = Math.random() * CONFIG.treeHeight;
+                const r = (1 - h/CONFIG.treeHeight) * 38 * (type==='gold'?Math.sqrt(Math.random()):1.05);
+                const a = Math.random() * Math.PI * 2;
+                tree.push(r * Math.cos(a), h - CONFIG.treeHeight/2, r * Math.sin(a));
+                const phi = Math.acos(2*Math.random()-1), lam = 2*Math.PI*Math.random(), rad = 80 * Math.cbrt(Math.random());
+                explode.push(rad*Math.sin(phi)*Math.cos(lam), rad*Math.sin(phi)*Math.sin(lam), rad*Math.cos(phi));
+                const t = Math.random() * Math.PI * 2;
+                heart.push( (16*Math.pow(Math.sin(t), 3))*2.2, (13*Math.cos(t)-5*Math.cos(2*t)-2*Math.cos(3*t)-Math.cos(4*t))*2.2 + 5, (Math.random()-0.5)*15);
+                pos.push(tree[i*3], tree[i*3+1], tree[i*3+2]);
+            }
+            const geo = new THREE.BufferGeometry();
+            geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+            geo.userData = { tree, explode, heart };
+            const p = new THREE.Points(geo, new THREE.PointsMaterial({ size, map: createCustomTexture(type), transparent: true, blending: type==='gift'?THREE.NormalBlending:THREE.AdditiveBlending, depthWrite: false }));
+            scene.add(p);
+            return p;
+        }
+
+        function startSystem() {
+            document.getElementById('btnStart').style.display = 'none';
+            bgMusic.play().catch(()=>{});
+            init3D();
+            const video = document.getElementsByClassName('input_video')[0];
+            const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+            hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.6 });
+            hands.onResults(results => {
+                const canvas = document.getElementById('camera-preview');
+                const ctx = canvas.getContext('2d');
+                ctx.clearRect(0,0,130,100); ctx.drawImage(results.image, 0, 0, 130, 100);
+                const statusDiv = document.getElementById('status');
+                if(results.multiHandLandmarks.length > 0) {
+                    const lm = results.multiHandLandmarks[0];
+                    handX = lm[9].x;
+                    const isFingerOpen = (t, p) => lm[t].y < lm[p].y;
+                    const openCount = [8,12,16,20].filter(i => isFingerOpen(i, i-2)).length;
+                    const pinch = Math.hypot(lm[4].x - lm[8].x, lm[4].y - lm[8].y);
+                    if (results.multiHandLandmarks.length === 2) { state = 'HEART'; statusDiv.innerText = "🫶 Heart Magic"; }
+                    else if (openCount <= 1) { state = 'TREE'; statusDiv.innerText = "✊ Cây Thông Noel"; }
+                    else if (pinch < 0.04) { state = 'PHOTO'; statusDiv.innerText = "👌 Đang Phóng To"; }
+                    else { state = 'EXPLODE'; statusDiv.innerText = "🖐 Quà & Ảnh Diệu Kỳ"; }
+                }
+            });
+            new Camera(video, { onFrame: async () => { await hands.send({image: video}); }, width: 480, height: 360 }).start();
+        }
+    </script>
+</body>
+</html>
